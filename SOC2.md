@@ -11,18 +11,20 @@ This document describes how the USDC→COP payments infrastructure supports the 
 | Control | Implementation |
 |---|---|
 | Least-privilege service accounts | Each Kubernetes `ServiceAccount` has only the permissions needed for its workload |
-| Secret scoping | `kubernetes_secret` vendor keys are namespace-scoped; pods mount only the keys they need via `secretKeyRef` |
-| No root containers | `runAsNonRoot: true` + `runAsUser: 1000` in all pod specs |
+| Secret storage | Vendor API keys stored in **AWS SSM Parameter Store** (KMS-encrypted); sourced into pods via `kubernetes_secret` at Terraform apply time |
+| IRSA (IAM Roles for Service Accounts) | `module.irsa` binds the `payments-api` ServiceAccount to an IAM role that has `ssm:GetParameter` on `/usdc-cop/*` only — pods never hold long-lived AWS credentials |
+| No root containers | `runAsNonRoot: true` + non-root user in Dockerfile; multi-stage build removes build tools from runtime image |
 | RBAC enforcement | Kubernetes RBAC roles restrict `get/list/watch` on secrets to the `payments` namespace only |
+| CI/CD credentials | GitHub Actions uses OIDC (`role-to-assume: AWS_CI_ROLE_ARN`) — no long-lived AWS keys stored as secrets once OIDC bootstrap is complete |
 
 ### Production upgrade path
-In production, replace `kubernetes_secret` with **HashiCorp Vault** dynamic secrets:
-- Vault Agent Injector injects short-lived credentials into pods at runtime
+In production, replace `kubernetes_secret` with **HashiCorp Vault** dynamic secrets or **AWS Secrets Manager** with automatic rotation:
+- Vault Agent Injector / AWS Secrets Manager CSI driver injects short-lived credentials into pods at runtime
 - Credentials are rotated automatically (TTL-based)
-- All Vault access is audited via Vault audit log → SIEM
+- All access is audited via Vault audit log / CloudTrail → SIEM
 
 ### API Authentication
-- All API endpoints require a bearer token (JWT) verified against an IdP (e.g., Auth0, Cognito) — add via FastAPI `Depends(verify_token)` middleware
+- **Future work:** All API endpoints should require a bearer token (JWT) verified against an IdP (e.g., Auth0, AWS Cognito) — add via FastAPI `Depends(verify_token)` middleware. Not yet implemented.
 - CI/CD secrets (`VENDOR_A_KEY`, etc.) are stored in GitHub Actions Secrets (encrypted at rest, never in source)
 
 ---
@@ -32,15 +34,16 @@ In production, replace `kubernetes_secret` with **HashiCorp Vault** dynamic secr
 ### Encryption in Transit (TLS)
 | Layer | Implementation |
 |---|---|
-| Client → Ingress | TLS 1.2+ enforced by nginx-ingress annotation `ssl-redirect: "true"` |
-| Ingress → Pod | mTLS via Linkerd/Istio service mesh (production) |
-| Pod → blockchain-mock | Internal cluster traffic (upgradeable to mTLS) |
+| Client → ALB | TLS 1.2+ on the AWS ALB HTTPS listener; HTTP redirected to HTTPS via ALB listener rule |
+| ALB → Pod | HTTP within the VPC private subnet (pod traffic never leaves AWS network boundary); upgradeable to mTLS via Linkerd/Istio |
+| Pod → blockchain-mock | Internal cluster traffic within private VPC subnet |
 
 ### Encryption at Rest
 | Resource | Encryption |
 |---|---|
-| `kubernetes_secret` | Encrypted by Kubernetes etcd encryption provider (AES-256 or KMS) |
-| Terraform state | S3 backend with `encrypt = true` + KMS CMK |
+| AWS SSM Parameter Store | Vendor keys stored as `SecureString` with KMS encryption (`aws:kms`) |
+| `kubernetes_secret` | Sourced from SSM at Terraform apply; encrypted by EKS etcd encryption provider |
+| Terraform state | S3 backend (`usdc-cop-tfstate`) with `encrypt = true` + KMS; DynamoDB lock table |
 | Prometheus TSDB | Encrypted EBS volume (production) |
 | Loki object storage | S3 SSE-S3 or SSE-KMS |
 
@@ -111,10 +114,12 @@ This creates a **tamper-evident audit trail** correlating each off-ramp transfer
 | Control | Implementation |
 |---|---|
 | All infra changes via IaC | Terraform — no manual `kubectl apply` in production |
-| Plan before apply | `terraform plan` runs on every PR; `terraform apply` only on merge to `main` |
-| Image immutability | Docker images tagged by Git SHA; `latest` tag also pushed but deploys use SHA tag |
-| Deployment tests gate rollout | `smoke-test.sh` must pass or pipeline fails and deployment is rolled back |
-| Secrets rotation | Vault TTL-based rotation (production); GitHub Actions secret rotation via org-level secret management |
+| Plan before apply | `terraform plan` runs on every PR (posts output as comment); `terraform apply` only on merge to `main` |
+| Image immutability | Docker images tagged by Git SHA (`sha-XXXXXXXX`) pushed to ECR; `latest` also pushed but EKS deploys use SHA tag |
+| Multi-stage Docker builds | Builder stage installs dependencies; runtime image contains only venv + app code — no build tools in production image |
+| Deployment tests gate rollout | `smoke-test.sh` must pass or pipeline fails; CI emits `::warning` DORA annotation for failure tracking |
+| CI/CD credential hygiene | GitHub Actions uses OIDC short-lived credentials (`AWS_CI_ROLE_ARN`) scoped to the specific repository |
+| Secrets rotation | AWS SSM Parameter Store rotation (production); GitHub Actions secret rotation via org-level secret management |
 
 ---
 
@@ -135,6 +140,7 @@ This creates a **tamper-evident audit trail** correlating each off-ramp transfer
 | Control | Implementation |
 |---|---|
 | Redundancy | Minimum 2 API replicas via HPA `minReplicas: 2` |
+| Multi-AZ deployment | EKS node group spans 3 Availability Zones (`ap-south-1a/b/c`); ALB is also multi-AZ |
 | Auto-scaling | HPA scales to 10 pods on CPU > 70% |
 | Health probes | Liveness + readiness probes prevent traffic to unhealthy pods |
 | Rolling updates | `maxUnavailable: 25%` ensures continuous availability during deploys |
