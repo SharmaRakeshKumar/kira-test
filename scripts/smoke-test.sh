@@ -3,7 +3,7 @@
 # Called by CI after terraform apply + rollout.
 # Exit code 1 = deployment fails.
 
-set -euo pipefail
+set -uo pipefail
 
 BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 PASS=0
@@ -16,35 +16,39 @@ assert_eq() {
   local label="$1" expected="$2" actual="$3"
   if [ "$actual" = "$expected" ]; then
     green "$label"
-    ((PASS++))
+    ((PASS++)) || true
   else
     red "$label  (expected='$expected' got='$actual')"
-    ((FAIL++))
+    ((FAIL++)) || true
   fi
 }
 
 echo "=== Smoke Tests: $BASE_URL ==="
 
 # ── Health check ──────────────────────────────────────────────────────────────
-STATUS=$(curl -sf "$BASE_URL/health" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['status'])")
+STATUS=$(curl -s "$BASE_URL/health" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['status'])")
 assert_eq "GET /health returns ok" "ok" "$STATUS"
 
 # ── Test 1: Valid txhash + vendorA → success ──────────────────────────────────
-RESP=$(curl -sf -X POST "$BASE_URL/transfer" \
+echo "Calling POST /transfer vendorA..."
+RESP=$(curl -s -X POST "$BASE_URL/transfer" \
   -H "Content-Type: application/json" \
   -d '{"amount": 100, "vendor": "vendorA", "txhash": "0x123abc"}')
+echo "Response: $RESP"
 
-STATUS=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
-VENDOR_STATUS=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['vendor_response']['status'])")
+STATUS=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','MISSING'))" 2>/dev/null || echo "PARSE_ERROR")
+VENDOR_STATUS=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('vendor_response',{}).get('status','MISSING'))" 2>/dev/null || echo "PARSE_ERROR")
 assert_eq "vendorA + valid txhash → status=success" "success" "$STATUS"
 assert_eq "vendorA + valid txhash → vendor_response.status=success" "success" "$VENDOR_STATUS"
 
 # ── Test 2: Valid txhash + vendorB → pending ──────────────────────────────────
-RESP=$(curl -sf -X POST "$BASE_URL/transfer" \
+echo "Calling POST /transfer vendorB..."
+RESP=$(curl -s -X POST "$BASE_URL/transfer" \
   -H "Content-Type: application/json" \
   -d '{"amount": 50, "vendor": "vendorB", "txhash": "0xdeadbeef"}')
+echo "Response: $RESP"
 
-VENDOR_STATUS=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['vendor_response']['status'])")
+VENDOR_STATUS=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('vendor_response',{}).get('status','MISSING'))" 2>/dev/null || echo "PARSE_ERROR")
 assert_eq "vendorB + valid txhash → vendor_response.status=pending" "pending" "$VENDOR_STATUS"
 
 # ── Test 3: Invalid txhash format → 422 ──────────────────────────────────────
