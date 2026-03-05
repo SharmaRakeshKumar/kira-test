@@ -252,8 +252,9 @@ jobs:
       - name: Wait for ALB hostname
         id: alb
         run: |
-          echo "Waiting for ALB..."
-          for i in {1..30}; do
+          echo "Waiting for ALB to be provisioned..."
+          LB=""
+          for i in {1..40}; do
             LB=$(kubectl get svc payments-api -n ${{ env.K8S_NAMESPACE }} \
               -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
             if [ -n "$LB" ]; then
@@ -261,21 +262,37 @@ jobs:
               echo "ALB ready: $LB"
               break
             fi
-            echo "Waiting... ($i/30)"
+            echo "Waiting... ($i/40)"
             sleep 15
           done
+          if [ -z "$LB" ]; then
+            echo "ERROR: ALB hostname never appeared"
+            kubectl get svc -n ${{ env.K8S_NAMESPACE }}
+            kubectl describe svc payments-api -n ${{ env.K8S_NAMESPACE }}
+            kubectl get pods -n kube-system | grep aws-load-balancer
+            kubectl logs -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller --tail=50
+            exit 1
+          fi
       - name: Wait for API to be healthy
         run: |
-          for i in {1..20}; do
+          echo "Waiting for API at http://${{ steps.alb.outputs.lb_host }}/health"
+          STATUS="000"
+          for i in {1..24}; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
               http://${{ steps.alb.outputs.lb_host }}/health || echo "000")
             if [ "$STATUS" = "200" ]; then
               echo "API is healthy"
               break
             fi
-            echo "Returned $STATUS, retrying... ($i/20)"
+            echo "Returned $STATUS, retrying... ($i/24)"
             sleep 10
           done
+          if [ "$STATUS" != "200" ]; then
+            echo "ERROR: API never became healthy"
+            kubectl get pods -n ${{ env.K8S_NAMESPACE }}
+            kubectl logs -n ${{ env.K8S_NAMESPACE }} -l app=payments-api --tail=50
+            exit 1
+          fi
       - name: Run smoke tests against live API
         env:
           API_BASE_URL: http://${{ steps.alb.outputs.lb_host }}
