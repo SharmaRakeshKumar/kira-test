@@ -1,0 +1,116 @@
+version: "3.9"
+
+networks:
+  payments-net:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+
+services:
+  # ── Core API ────────────────────────────────────────────────────────────────
+  payments-api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    image: usdc-cop-api:local
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: local
+      BLOCKCHAIN_SERVICE_URL: http://blockchain-mock:8001
+      OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
+      LOG_LEVEL: INFO
+      GIT_SHA: ${GIT_SHA:-local}
+    depends_on:
+      blockchain-mock:
+        condition: service_healthy
+    networks:
+      - payments-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Blockchain mock ─────────────────────────────────────────────────────────
+  blockchain-mock:
+    build:
+      context: ./api
+      dockerfile: Dockerfile.blockchain-mock
+    ports:
+      - "8001:8001"
+    networks:
+      - payments-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8001/health').raise_for_status()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Observability stack ─────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    networks:
+      - payments-net
+
+  grafana:
+    image: grafana/grafana:11.3.2
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./observability/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+    depends_on:
+      - prometheus
+      - loki
+    networks:
+      - payments-net
+
+  loki:
+    image: grafana/loki:3.2.1
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki-data:/loki
+    networks:
+      - payments-net
+
+  promtail:
+    image: grafana/promtail:3.2.1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./observability/promtail.yml:/etc/promtail/config.yml:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - payments-net
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.114.0
+    ports:
+      - "4318:4318"   # OTLP HTTP
+      - "4317:4317"   # OTLP gRPC
+    volumes:
+      - ./observability/otel-collector.yml:/etc/otel-collector-config.yml:ro
+    command: ["--config=/etc/otel-collector-config.yml"]
+    networks:
+      - payments-net

@@ -1,0 +1,91 @@
+{
+  "title": "USDC→COP Payments API",
+  "uid": "payments-api",
+  "schemaVersion": 36,
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Requests per Vendor (RPS)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "rate(transfer_requests_total[1m])",
+          "legendFormat": "{{vendor}} / {{status}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "P99 Latency per Vendor",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, rate(transfer_latency_seconds_bucket[5m]))",
+          "legendFormat": "p99 {{vendor}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Success Rate %",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8},
+      "targets": [
+        {
+          "expr": "100 * sum(rate(transfer_requests_total{status='success'}[5m])) / sum(rate(transfer_requests_total[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Txhash Confirmations",
+      "type": "piechart",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 8},
+      "targets": [
+        {
+          "expr": "sum by (result) (txhash_confirmations_total)",
+          "legendFormat": "{{result}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Active Transfers",
+      "type": "gauge",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 8},
+      "targets": [
+        {
+          "expr": "active_transfers"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "DORA: Deployment Frequency",
+      "type": "timeseries",
+      "description": "Each spike = a deployment event. DORA metric: how often you deploy to production.",
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 12},
+      "targets": [
+        {
+          "expr": "changes(deployment_info[24h])",
+          "legendFormat": "Deploys per 24h"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Error Rate by Vendor",
+      "type": "timeseries",
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 12},
+      "targets": [
+        {
+          "expr": "rate(transfer_requests_total{status=~'error|tx_not_found'}[5m])",
+          "legendFormat": "{{vendor}} errors"
+        }
+      ]
+    }
+  ]
+}

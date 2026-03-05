@@ -1,0 +1,246 @@
+name: CI/CD — EKS ap-south-1
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  AWS_REGION:      ap-south-1
+  ECR_API_REPO:    usdc-cop-api
+  ECR_MOCK_REPO:   usdc-cop-blockchain-mock
+  EKS_CLUSTER:     usdc-cop-dev
+  K8S_NAMESPACE:   payments
+
+###############################################################################
+# Job 1 — Unit Tests
+###############################################################################
+jobs:
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+
+      - name: Run pytest
+        run: pytest tests/ -v --tb=short --junitxml=test-results.xml
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: api/test-results.xml
+
+###############################################################################
+# Job 2 — Build and Push images to ECR
+###############################################################################
+  build:
+    name: Build and Push to ECR
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push'
+
+    outputs:
+      image_tag:    ${{ steps.tag.outputs.tag }}
+      api_ecr_url:  ${{ steps.ecr_login.outputs.registry }}/${{ env.ECR_API_REPO }}
+      mock_ecr_url: ${{ steps.ecr_login.outputs.registry }}/${{ env.ECR_MOCK_REPO }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr_login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Generate image tag
+        id: tag
+        run: echo "tag=sha-${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push payments-api
+        uses: docker/build-push-action@v6
+        with:
+          context: ./api
+          file: ./api/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.ecr_login.outputs.registry }}/${{ env.ECR_API_REPO }}:${{ steps.tag.outputs.tag }}
+            ${{ steps.ecr_login.outputs.registry }}/${{ env.ECR_API_REPO }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push blockchain-mock
+        uses: docker/build-push-action@v6
+        with:
+          context: ./api
+          file: ./api/Dockerfile.blockchain-mock
+          push: true
+          tags: |
+            ${{ steps.ecr_login.outputs.registry }}/${{ env.ECR_MOCK_REPO }}:${{ steps.tag.outputs.tag }}
+            ${{ steps.ecr_login.outputs.registry }}/${{ env.ECR_MOCK_REPO }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+###############################################################################
+# Job 3 — Terraform Plan (pull requests only, posts plan as PR comment)
+###############################################################################
+  terraform_plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Terraform Init
+        working-directory: infra/terraform
+        run: terraform init
+
+      - name: Terraform Validate
+        working-directory: infra/terraform
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: infra/terraform
+        run: |
+          terraform plan -no-color \
+            -var="api_image_tag=sha-${GITHUB_SHA::8}" \
+            -var="git_sha=${{ github.sha }}" \
+            -var="vendor_a_key=${{ secrets.VENDOR_A_KEY }}" \
+            -var="vendor_b_key=${{ secrets.VENDOR_B_KEY }}" \
+            -var="grafana_admin_password=${{ secrets.GRAFANA_ADMIN_PASSWORD }}" \
+          | tee plan.txt
+
+      - name: Post plan as PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('infra/terraform/plan.txt', 'utf8');
+            const body = plan.length > 60000 ? plan.slice(0, 60000) + '\n...(truncated)' : plan;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Terraform Plan\n\`\`\`\n${body}\n\`\`\``
+            });
+
+###############################################################################
+# Job 4 — Deploy to EKS (main branch push only)
+###############################################################################
+  deploy:
+    name: Deploy to EKS
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    environment: production   # creates a manual approval gate in GitHub UI
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Terraform Init
+        working-directory: infra/terraform
+        run: terraform init
+
+      - name: Terraform Apply
+        working-directory: infra/terraform
+        run: |
+          terraform apply -auto-approve \
+            -var="api_image_tag=sha-${GITHUB_SHA::8}" \
+            -var="git_sha=${{ github.sha }}" \
+            -var="vendor_a_key=${{ secrets.VENDOR_A_KEY }}" \
+            -var="vendor_b_key=${{ secrets.VENDOR_B_KEY }}" \
+            -var="grafana_admin_password=${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.EKS_CLUSTER }}
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/payments-api    -n ${{ env.K8S_NAMESPACE }} --timeout=180s
+          kubectl rollout status deployment/blockchain-mock -n ${{ env.K8S_NAMESPACE }} --timeout=60s
+
+      - name: Get ALB hostname
+        id: alb
+        run: |
+          for i in {1..20}; do
+            LB=$(kubectl get svc payments-api -n ${{ env.K8S_NAMESPACE }} \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            if [ -n "$LB" ]; then
+              echo "lb_host=$LB" >> $GITHUB_OUTPUT
+              echo "ALB ready: $LB"
+              break
+            fi
+            echo "Waiting for ALB... ($i/20)"
+            sleep 15
+          done
+
+      - name: Run smoke tests
+        env:
+          API_BASE_URL: http://${{ steps.alb.outputs.lb_host }}
+        run: bash scripts/smoke-test.sh
+
+      # DORA metrics
+      - name: DORA — record successful deploy
+        if: success()
+        run: |
+          echo "::notice title=Deployed::sha-${GITHUB_SHA::8} to production at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+      - name: DORA — record failed deploy
+        if: failure()
+        run: |
+          echo "::warning title=Deploy Failed::sha-${GITHUB_SHA::8} — increment change failure rate"
