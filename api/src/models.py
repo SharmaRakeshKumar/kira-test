@@ -20,7 +20,7 @@ class TransferRequest(BaseModel):
     @classmethod
     def txhash_format(cls, v):
         # Accept 0x-prefixed hex (EVM) or any 32+ char alphanumeric hash
-        if not re.match(r"^(0x[a-fA-F0-9]{40,}|[a-fA-F0-9]{32,})$", v):
+        if not re.match(r"^(0x[a-fA-F0-9]{6,}|[a-fA-F0-9]{32,})$", v):
             raise ValueError("txhash must be a valid transaction hash")
         return v
 

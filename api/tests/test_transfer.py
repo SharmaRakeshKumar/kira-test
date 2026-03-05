@@ -14,6 +14,13 @@ os.environ.setdefault("BLOCKCHAIN_SERVICE_URL", "http://blockchain-mock:8001")
 
 from src.main import app
 
+# Valid txhashes that pass the Pydantic validator (0x + at least 6 hex chars)
+VALID_TX_A    = "0x123abc"
+VALID_TX_B    = "0xdeadbeef"
+VALID_TX_LONG = "0x" + "f" * 40   # used for not-on-chain test
+
+BLOCKCHAIN_BASE = "http://blockchain-mock:8001"
+
 
 @pytest.fixture
 def anyio_backend():
@@ -28,15 +35,14 @@ async def client():
         yield ac
 
 
-# ── Helper: mock blockchain ───────────────────────────────────────────────────
-def mock_blockchain_confirmed(txhash: str):
-    return respx.get(f"http://blockchain-mock:8001/tx/{txhash}").mock(
+# ── Blockchain mock helpers ───────────────────────────────────────────────────
+def _confirmed(router, txhash: str):
+    router.get(f"{BLOCKCHAIN_BASE}/tx/{txhash}").mock(
         return_value=httpx.Response(200, json={"txhash": txhash, "status": "confirmed"})
     )
 
-
-def mock_blockchain_not_found(txhash: str):
-    return respx.get(f"http://blockchain-mock:8001/tx/{txhash}").mock(
+def _not_found(router, txhash: str):
+    router.get(f"{BLOCKCHAIN_BASE}/tx/{txhash}").mock(
         return_value=httpx.Response(404, json={"detail": "not found"})
     )
 
@@ -60,14 +66,14 @@ async def test_ready(client):
 
 # ── POST /transfer: happy paths ───────────────────────────────────────────────
 @pytest.mark.anyio
-@respx.mock
 async def test_transfer_vendor_a_success(client):
     """VendorA with confirmed txhash → status: success"""
-    mock_blockchain_confirmed("0x123abc")
-    resp = await client.post(
-        "/transfer",
-        json={"amount": 100, "vendor": "vendorA", "txhash": "0x123abc"},
-    )
+    with respx.mock(base_url=BLOCKCHAIN_BASE) as router:
+        _confirmed(router, VALID_TX_A)
+        resp = await client.post(
+            "/transfer",
+            json={"amount": 100, "vendor": "vendorA", "txhash": VALID_TX_A},
+        )
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "success"
@@ -77,14 +83,14 @@ async def test_transfer_vendor_a_success(client):
 
 
 @pytest.mark.anyio
-@respx.mock
 async def test_transfer_vendor_b_pending(client):
-    """VendorB with confirmed txhash → status: pending"""
-    mock_blockchain_confirmed("0xdeadbeef")
-    resp = await client.post(
-        "/transfer",
-        json={"amount": 50, "vendor": "vendorB", "txhash": "0xdeadbeef"},
-    )
+    """VendorB with confirmed txhash → vendor_response.status: pending"""
+    with respx.mock(base_url=BLOCKCHAIN_BASE) as router:
+        _confirmed(router, VALID_TX_B)
+        resp = await client.post(
+            "/transfer",
+            json={"amount": 50, "vendor": "vendorB", "txhash": VALID_TX_B},
+        )
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "success"
@@ -93,42 +99,38 @@ async def test_transfer_vendor_b_pending(client):
 
 # ── POST /transfer: txhash failures ──────────────────────────────────────────
 @pytest.mark.anyio
-@respx.mock
 async def test_transfer_invalid_txhash(client):
-    """Unrecognised txhash → 422 not found"""
-    mock_blockchain_not_found("invalidhash999")
+    """Badly formatted txhash → Pydantic rejects with 422 before hitting blockchain"""
     resp = await client.post(
         "/transfer",
-        json={"amount": 100, "vendor": "vendorA", "txhash": "invalidhash999"},
+        json={"amount": 100, "vendor": "vendorA", "txhash": "not-a-hash"},
     )
-    # Pydantic rejects the format first
     assert resp.status_code == 422
 
 
 @pytest.mark.anyio
-@respx.mock
 async def test_transfer_txhash_not_on_chain(client):
-    """Valid format but blockchain returns not found → 422"""
-    txhash = "0x" + "f" * 40
-    mock_blockchain_not_found(txhash)
-    resp = await client.post(
-        "/transfer",
-        json={"amount": 100, "vendor": "vendorA", "txhash": txhash},
-    )
+    """Valid format but blockchain returns 404 → 422 not confirmed"""
+    with respx.mock(base_url=BLOCKCHAIN_BASE) as router:
+        _not_found(router, VALID_TX_LONG)
+        resp = await client.post(
+            "/transfer",
+            json={"amount": 100, "vendor": "vendorA", "txhash": VALID_TX_LONG},
+        )
     assert resp.status_code == 422
     assert "not confirmed" in resp.json()["detail"]
 
 
 # ── POST /transfer: vendor validation ────────────────────────────────────────
 @pytest.mark.anyio
-@respx.mock
 async def test_transfer_unknown_vendor(client):
-    """Unknown vendor → 400"""
-    mock_blockchain_confirmed("0x123abc")
-    resp = await client.post(
-        "/transfer",
-        json={"amount": 100, "vendor": "vendorZ", "txhash": "0x123abc"},
-    )
+    """Unknown vendor → 400 after blockchain confirms txhash"""
+    with respx.mock(base_url=BLOCKCHAIN_BASE) as router:
+        _confirmed(router, VALID_TX_A)
+        resp = await client.post(
+            "/transfer",
+            json={"amount": 100, "vendor": "vendorZ", "txhash": VALID_TX_A},
+        )
     assert resp.status_code == 400
     assert "Unknown vendor" in resp.json()["detail"]
 
@@ -138,7 +140,7 @@ async def test_transfer_unknown_vendor(client):
 async def test_transfer_negative_amount(client):
     resp = await client.post(
         "/transfer",
-        json={"amount": -10, "vendor": "vendorA", "txhash": "0x123abc"},
+        json={"amount": -10, "vendor": "vendorA", "txhash": VALID_TX_A},
     )
     assert resp.status_code == 422
 
@@ -147,7 +149,7 @@ async def test_transfer_negative_amount(client):
 async def test_transfer_zero_amount(client):
     resp = await client.post(
         "/transfer",
-        json={"amount": 0, "vendor": "vendorA", "txhash": "0x123abc"},
+        json={"amount": 0, "vendor": "vendorA", "txhash": VALID_TX_A},
     )
     assert resp.status_code == 422
 
@@ -161,6 +163,7 @@ async def test_transfer_missing_fields(client):
 # ── Metrics endpoint ──────────────────────────────────────────────────────────
 @pytest.mark.anyio
 async def test_metrics_endpoint(client):
-    resp = await client.get("/metrics")
+    # /metrics/ with trailing slash avoids the 307 redirect from the ASGI mount
+    resp = await client.get("/metrics/", follow_redirects=True)
     assert resp.status_code == 200
     assert b"transfer_requests_total" in resp.content
