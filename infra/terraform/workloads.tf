@@ -315,9 +315,7 @@ resource "kubernetes_service" "payments_api" {
     type = "LoadBalancer"
   }
 
-  timeouts {
-    create = "10m"
-  }
+  wait_for_load_balancer = false
 }
 
 resource "kubernetes_service" "blockchain_mock" {
@@ -371,7 +369,7 @@ resource "kubernetes_horizontal_pod_autoscaler_v2" "payments_api" {
 }
 
 ###############################################################################
-# Observability — kube-prometheus-stack
+# Observability - kube-prometheus-stack
 ###############################################################################
 
 resource "helm_release" "kube_prometheus_stack" {
