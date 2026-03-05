@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    APP_VERSION: str = "1.0.0"
+    APP_VERSION: str = "1.0.1"
     ENVIRONMENT: str = "local"
     GIT_SHA: str = "unknown"
 
