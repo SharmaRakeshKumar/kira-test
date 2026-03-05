@@ -278,7 +278,7 @@ jobs:
           done
       - name: Run smoke tests against live API
         env:
-          API_BASE_URL: http://$\{\{ steps.alb.outputs.lb_host }}
+          API_BASE_URL: http://${{ steps.alb.outputs.lb_host }}
         run: bash scripts/smoke-test.sh
       - name: DORA - deployment verified
         if: success()
