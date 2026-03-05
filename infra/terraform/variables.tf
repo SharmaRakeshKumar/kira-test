@@ -116,6 +116,12 @@ variable "vendor_b_key" {
   default     = "mock-vendor-b-key"
 }
 
+variable "github_repo" {
+  description = "GitHub repository in 'owner/repo' format — used to scope the OIDC CI role"
+  type        = string
+  default     = "your-org/usdc-cop-api"
+}
+
 variable "grafana_admin_password" {
   description = "Grafana admin password"
   type        = string

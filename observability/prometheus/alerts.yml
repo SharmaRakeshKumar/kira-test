@@ -1,0 +1,94 @@
+groups:
+  - name: payments_api
+    interval: 30s
+    rules:
+
+      # ── Error rate ────────────────────────────────────────────────────────────
+      - alert: HighTransferErrorRate
+        expr: |
+          (
+            sum(rate(transfer_requests_total{status="error"}[5m])) by (vendor)
+            /
+            sum(rate(transfer_requests_total[5m])) by (vendor)
+          ) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          team: payments
+        annotations:
+          summary: "High error rate for vendor {{ $labels.vendor }}"
+          description: >
+            Error rate for {{ $labels.vendor }} is {{ $value | humanizePercentage }}
+            (threshold 5%) over the last 5 minutes.
+
+      # ── Latency ───────────────────────────────────────────────────────────────
+      - alert: HighTransferLatencyP99
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(transfer_latency_seconds_bucket[5m])) by (vendor, le)
+          ) > 2
+        for: 2m
+        labels:
+          severity: warning
+          team: payments
+        annotations:
+          summary: "P99 latency > 2s for vendor {{ $labels.vendor }}"
+          description: >
+            P99 latency for {{ $labels.vendor }} is {{ $value | humanizeDuration }}
+            (threshold 2s) over the last 5 minutes.
+
+      # ── Txhash confirmation failures ──────────────────────────────────────────
+      - alert: HighTxhashNotFoundRate
+        expr: |
+          (
+            rate(txhash_confirmations_total{result="not found"}[5m])
+            /
+            rate(txhash_confirmations_total[5m])
+          ) > 0.20
+        for: 5m
+        labels:
+          severity: warning
+          team: payments
+        annotations:
+          summary: "High txhash not-found rate (> 20%)"
+          description: >
+            More than 20% of txhash confirmations are returning "not found".
+            This may indicate fraudulent submissions or a blockchain indexer outage.
+
+      # ── Active transfers stuck ────────────────────────────────────────────────
+      - alert: ActiveTransfersStuck
+        expr: active_transfers > 50
+        for: 5m
+        labels:
+          severity: critical
+          team: payments
+        annotations:
+          summary: "active_transfers gauge stuck above 50"
+          description: >
+            {{ $value }} transfers have been in-flight for more than 5 minutes.
+            Possible deadlock or vendor unresponsiveness. Check vendor logs.
+
+      # ── Service availability ──────────────────────────────────────────────────
+      - alert: PaymentsAPIDown
+        expr: up{job="payments-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: payments
+        annotations:
+          summary: "Payments API is unreachable"
+          description: >
+            Prometheus cannot scrape the payments-api /metrics endpoint.
+            The service may be crashed or the pod is not running.
+
+      - alert: BlockchainMockDown
+        expr: up{job="blockchain-mock"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: payments
+        annotations:
+          summary: "Blockchain mock service is unreachable"
+          description: >
+            Prometheus cannot scrape the blockchain-mock /metrics endpoint.
+            All transfers will fail txhash validation until this is restored.

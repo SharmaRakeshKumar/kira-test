@@ -123,7 +123,7 @@ This creates a **tamper-evident audit trail** correlating each off-ramp transfer
 | Risk | Mitigation |
 |---|---|
 | Vendor unavailability | Multiple vendors; future circuit-breaker pattern; vendor health exposed via `/ready` |
-| Double-spend / replay | `txhash` uniqueness check (idempotency key); store processed hashes in Redis with TTL |
+| Double-spend / replay | **Future work:** store processed `txhash` values in Redis with TTL to enforce uniqueness. Not yet implemented — currently a txhash can be resubmitted across separate requests. |
 | Secrets leakage | Secrets only in environment variables from Kubernetes Secrets / Vault; never in source code or logs |
 | Container escape | Non-root user; read-only root filesystem (production); Pod Security Admission |
 | Supply chain attacks | Dependabot for dependency updates; Docker image signing (Cosign) |
@@ -149,7 +149,7 @@ This creates a **tamper-evident audit trail** correlating each off-ramp transfer
 | Input validation | Pydantic models enforce: `amount > 0`, `txhash` regex, `vendor` alphanumeric |
 | Blockchain proof required | Every transfer blocked until txhash returns `"confirmed"` |
 | Request traceability | Every transfer has a unique `request_id` (UUID v4) returned to caller |
-| Idempotency | `request_id` can be used as idempotency key for retry-safe integrations |
+| Idempotency | `request_id` (UUID v4) is returned on every response for caller traceability. **Future work:** server-side idempotency (reject duplicate `request_id` replays) is not yet implemented. |
 
 ---
 

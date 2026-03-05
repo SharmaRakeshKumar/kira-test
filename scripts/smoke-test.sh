@@ -57,6 +57,12 @@ HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/transfer" 
   -d '{"amount": 100, "vendor": "vendorA", "txhash": "not-a-hash"}')
 assert_eq "Invalid txhash format → 422" "422" "$HTTP_CODE"
 
+# ── Test 3a: Valid txhash not confirmed on blockchain → 422 ──────────────────
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/transfer" \
+  -H "Content-Type: application/json" \
+  -d '{"amount": 100, "vendor": "vendorA", "txhash": "0xdeaddead"}')
+assert_eq "Valid txhash not on blockchain → 422" "422" "$HTTP_CODE"
+
 # ── Test 4: Unknown vendor → 400 ─────────────────────────────────────────────
 RESP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/transfer" \
   -H "Content-Type: application/json" \

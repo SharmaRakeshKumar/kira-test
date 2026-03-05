@@ -27,3 +27,8 @@ output "configure_kubectl" {
   value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${module.eks.cluster_name}"
   description = "Run this to configure kubectl"
 }
+
+output "ci_role_arn" {
+  value       = module.github_oidc.ci_role_arn
+  description = "ARN to set as AWS_CI_ROLE_ARN in GitHub Actions secrets"
+}

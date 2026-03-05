@@ -126,3 +126,9 @@ module "irsa" {
   service_account_name = "payments-api"
   secrets_arns         = module.secrets.secret_arns
 }
+
+module "github_oidc" {
+  source       = "./modules/github-oidc"
+  project_name = var.project_name
+  github_repo  = var.github_repo
+}

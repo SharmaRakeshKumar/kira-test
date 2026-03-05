@@ -116,6 +116,19 @@ async def test_transfer_txhash_not_on_chain(client):
     )
     assert resp.status_code == 422
 
+async def test_transfer_txhash_blockchain_not_found_sentinel(client):
+    """0xdeaddead passes format validation but blockchain returns 404 → 422"""
+    NOT_FOUND_TX = "0xdeaddead"
+    blockchain_service._client = _make_blockchain_mock({
+        NOT_FOUND_TX: (404, {"detail": "not found"})
+    })
+    resp = await client.post(
+        "/transfer",
+        json={"amount": 100, "vendor": "vendorA", "txhash": NOT_FOUND_TX},
+    )
+    assert resp.status_code == 422
+
+
 # ── POST /transfer: vendor validation ────────────────────────────────────────
 async def test_transfer_unknown_vendor(client):
     """Unknown vendor → 400"""

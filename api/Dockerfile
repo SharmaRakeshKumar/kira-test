@@ -1,17 +1,27 @@
-FROM python:3.12-slim AS base
+# ── Stage 1: dependency builder ─────────────────────────────────────────────
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+RUN python -m venv /venv
+COPY requirements.txt .
+RUN /venv/bin/pip install --no-cache-dir -r requirements.txt
+
+# ── Stage 2: lean runtime image ─────────────────────────────────────────────
+FROM python:3.12-slim AS runtime
 
 WORKDIR /app
 
 # SOC 2: run as non-root
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy only the venv — no pip cache, no build tools in final image
+COPY --from=builder /venv /venv
 
-COPY . .
+COPY --chown=appuser:appuser . .
 
-RUN chown -R appuser:appuser /app
 USER appuser
+
+ENV PATH="/venv/bin:$PATH"
 
 EXPOSE 8000
 

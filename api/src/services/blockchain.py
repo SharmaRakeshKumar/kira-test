@@ -4,13 +4,6 @@ from ..config import settings
 
 logger = structlog.get_logger()
 
-# Known valid hashes for mock/testing
-MOCK_CONFIRMED_HASHES = {
-    "0x123abc",
-    "0xdeadbeef",
-    "0x" + "a" * 64,
-}
-
 
 class BlockchainService:
     """

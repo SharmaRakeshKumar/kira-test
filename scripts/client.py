@@ -6,12 +6,14 @@ Usage:
   # Submit a transfer
   python scripts/client.py transfer --amount 100 --vendor vendorA --txhash 0x123abc
 
-  # Deploy a new vendor via IaC (requires terraform)
+  # Trigger a CI/CD deployment via GitHub Actions workflow dispatch
+  # Requires: GITHUB_TOKEN env var with repo workflow permissions
+  # Requires: GITHUB_REPO env var in "owner/repo" format
   python scripts/client.py deploy-vendor --name vendorC --image vendorC:latest
 """
 import argparse
 import json
-import subprocess
+import os
 import sys
 import httpx
 
@@ -26,33 +28,53 @@ def do_transfer(base_url: str, amount: float, vendor: str, txhash: str):
     resp.raise_for_status()
 
 
-def deploy_vendor(vendor_name: str, image: str, tf_dir: str):
+def deploy_vendor(vendor_name: str, image: str):
     """
-    Update Terraform vars and apply to register a new vendor.
-    In practice, this would also update main.py via a config map or plugin registry.
+    Trigger the CI/CD pipeline via GitHub Actions workflow dispatch.
+
+    Requires environment variables:
+      GITHUB_TOKEN — personal access token or fine-grained token with
+                     Actions: write permission on the target repository
+      GITHUB_REPO  — repository in "owner/repo" format
+                     (e.g. "myorg/usdc-cop-api")
     """
-    print(f"Deploying vendor '{vendor_name}' with image '{image}'...")
-    result = subprocess.run(
-        [
-            "terraform", "apply", "-auto-approve",
-            f"-var=new_vendor_name={vendor_name}",
-            f"-var=new_vendor_image={image}",
-        ],
-        cwd=tf_dir,
-        capture_output=True,
-        text=True,
-    )
-    print(result.stdout)
-    if result.returncode != 0:
-        print(result.stderr, file=sys.stderr)
+    token = os.environ.get("GITHUB_TOKEN")
+    repo = os.environ.get("GITHUB_REPO")
+    if not token:
+        print("ERROR: GITHUB_TOKEN environment variable is not set.", file=sys.stderr)
         sys.exit(1)
-    print(f"Vendor '{vendor_name}' deployed successfully.")
+    if not repo:
+        print("ERROR: GITHUB_REPO environment variable is not set (e.g. 'owner/repo').", file=sys.stderr)
+        sys.exit(1)
+
+    url = f"https://api.github.com/repos/{repo}/actions/workflows/ci-cd.yml/dispatches"
+    payload = {
+        "ref": "main",
+        "inputs": {
+            "reason": f"deploy-vendor: {vendor_name} image={image}",
+        },
+    }
+    print(f"Triggering workflow dispatch for vendor '{vendor_name}' (image={image})...")
+    resp = httpx.post(
+        url,
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        timeout=30,
+    )
+    if resp.status_code == 204:
+        print(f"Workflow dispatch accepted. Monitor progress at: https://github.com/{repo}/actions")
+    else:
+        print(f"ERROR: GitHub API returned {resp.status_code}: {resp.text}", file=sys.stderr)
+        sys.exit(1)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Payments API client")
     parser.add_argument("--base-url", default="http://localhost:8000")
-    parser.add_argument("--tf-dir", default="infra/terraform")
     sub = parser.add_subparsers(dest="command", required=True)
 
     t = sub.add_parser("transfer")
@@ -69,7 +91,7 @@ def main():
     if args.command == "transfer":
         do_transfer(args.base_url, args.amount, args.vendor, args.txhash)
     elif args.command == "deploy-vendor":
-        deploy_vendor(args.name, args.image, args.tf_dir)
+        deploy_vendor(args.name, args.image)
 
 
 if __name__ == "__main__":
