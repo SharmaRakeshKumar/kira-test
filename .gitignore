@@ -18,3 +18,15 @@ __pycache__/
 
 # OS
 .DS_Store
+
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Node
+node_modules/
+
+# Docker
+*.tar
