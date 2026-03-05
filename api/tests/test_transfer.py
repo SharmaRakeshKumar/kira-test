@@ -116,7 +116,6 @@ async def test_transfer_txhash_not_on_chain(client):
     )
     assert resp.status_code == 422
 
-
 # ── POST /transfer: vendor validation ────────────────────────────────────────
 async def test_transfer_unknown_vendor(client):
     """Unknown vendor → 400"""
@@ -128,7 +127,6 @@ async def test_transfer_unknown_vendor(client):
         json={"amount": 100, "vendor": "vendorZ", "txhash": VALID_TX_A},
     )
     assert resp.status_code == 400
-
 
 # ── Input validation ──────────────────────────────────────────────────────────
 async def test_transfer_negative_amount(client):
