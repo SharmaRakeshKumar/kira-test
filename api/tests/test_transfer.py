@@ -8,8 +8,7 @@ from httpx import AsyncClient, ASGITransport
 import os
 os.environ.setdefault("BLOCKCHAIN_SERVICE_URL", "http://blockchain-mock:8001")
 
-from src.main import app
-from src.services.blockchain import BlockchainService
+from src.main import app, blockchain_service
 
 VALID_TX_A    = "0x123abc"
 VALID_TX_B    = "0xdeadbeef"
@@ -26,9 +25,8 @@ async def client():
 
 def _make_blockchain_mock(responses: dict):
     """
-    Returns an httpx MockTransport that serves predefined txhash responses.
-    Bypasses respx entirely — injects a fake transport directly into
-    BlockchainService so no timing or scope issues are possible.
+    Returns an httpx AsyncClient with a MockTransport.
+    Injects directly into the blockchain_service instance.
     """
     def handler(request: httpx.Request) -> httpx.Response:
         txhash = request.url.path.split("/tx/")[-1]
@@ -37,15 +35,18 @@ def _make_blockchain_mock(responses: dict):
             return httpx.Response(status, json=body)
         return httpx.Response(404, json={"detail": "not found"})
 
-    return httpx.MockTransport(handler)
+    return httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="http://blockchain-mock:8001",
+    )
 
 
 @pytest.fixture(autouse=True)
 def reset_blockchain_client():
-    """Restore the real blockchain client after every test."""
-    original = BlockchainService._client
+    """Save and restore the real blockchain client after every test."""
+    original = blockchain_service._client   # instance attribute — always exists
     yield
-    BlockchainService._client = original
+    blockchain_service._client = original
 
 
 # ── Health checks ─────────────────────────────────────────────────────────────
@@ -66,13 +67,9 @@ async def test_ready(client):
 # ── POST /transfer: happy paths ───────────────────────────────────────────────
 async def test_transfer_vendor_a_success(client):
     """VendorA with confirmed txhash → status: success"""
-    from src.main import blockchain_service
-    blockchain_service._client = httpx.AsyncClient(
-        transport=_make_blockchain_mock({
-            VALID_TX_A: (200, {"txhash": VALID_TX_A, "status": "confirmed"})
-        }),
-        base_url="http://blockchain-mock:8001",
-    )
+    blockchain_service._client = _make_blockchain_mock({
+        VALID_TX_A: (200, {"txhash": VALID_TX_A, "status": "confirmed"})
+    })
     resp = await client.post(
         "/transfer",
         json={"amount": 100, "vendor": "vendorA", "txhash": VALID_TX_A},
@@ -87,13 +84,9 @@ async def test_transfer_vendor_a_success(client):
 
 async def test_transfer_vendor_b_pending(client):
     """VendorB with confirmed txhash → vendor_response.status: pending"""
-    from src.main import blockchain_service
-    blockchain_service._client = httpx.AsyncClient(
-        transport=_make_blockchain_mock({
-            VALID_TX_B: (200, {"txhash": VALID_TX_B, "status": "confirmed"})
-        }),
-        base_url="http://blockchain-mock:8001",
-    )
+    blockchain_service._client = _make_blockchain_mock({
+        VALID_TX_B: (200, {"txhash": VALID_TX_B, "status": "confirmed"})
+    })
     resp = await client.post(
         "/transfer",
         json={"amount": 50, "vendor": "vendorB", "txhash": VALID_TX_B},
@@ -116,11 +109,7 @@ async def test_transfer_invalid_txhash(client):
 
 async def test_transfer_txhash_not_on_chain(client):
     """Valid format but blockchain returns 404 → 422"""
-    from src.main import blockchain_service
-    blockchain_service._client = httpx.AsyncClient(
-        transport=_make_blockchain_mock({}),  # empty → all return 404
-        base_url="http://blockchain-mock:8001",
-    )
+    blockchain_service._client = _make_blockchain_mock({})  # empty → all 404
     resp = await client.post(
         "/transfer",
         json={"amount": 100, "vendor": "vendorA", "txhash": VALID_TX_LONG},
@@ -132,13 +121,9 @@ async def test_transfer_txhash_not_on_chain(client):
 # ── POST /transfer: vendor validation ────────────────────────────────────────
 async def test_transfer_unknown_vendor(client):
     """Unknown vendor → 400"""
-    from src.main import blockchain_service
-    blockchain_service._client = httpx.AsyncClient(
-        transport=_make_blockchain_mock({
-            VALID_TX_A: (200, {"txhash": VALID_TX_A, "status": "confirmed"})
-        }),
-        base_url="http://blockchain-mock:8001",
-    )
+    blockchain_service._client = _make_blockchain_mock({
+        VALID_TX_A: (200, {"txhash": VALID_TX_A, "status": "confirmed"})
+    })
     resp = await client.post(
         "/transfer",
         json={"amount": 100, "vendor": "vendorZ", "txhash": VALID_TX_A},
