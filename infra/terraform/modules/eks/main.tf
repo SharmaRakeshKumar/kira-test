@@ -49,10 +49,25 @@ resource "aws_iam_role" "eks_nodes" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "eks_worker_node_policy"    { policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy";          role = aws_iam_role.eks_nodes.name }
-resource "aws_iam_role_policy_attachment" "eks_cni_policy"            { policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy";               role = aws_iam_role.eks_nodes.name }
-resource "aws_iam_role_policy_attachment" "eks_ecr_readonly"          { policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly";  role = aws_iam_role.eks_nodes.name }
-resource "aws_iam_role_policy_attachment" "eks_ssm_managed_instance"  { policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore";        role = aws_iam_role.eks_nodes.name }
+resource "aws_iam_role_policy_attachment" "eks_worker_node_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  role       = aws_iam_role.eks_nodes.name
+}
+
+resource "aws_iam_role_policy_attachment" "eks_cni_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.eks_nodes.name
+}
+
+resource "aws_iam_role_policy_attachment" "eks_ecr_readonly" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role       = aws_iam_role.eks_nodes.name
+}
+
+resource "aws_iam_role_policy_attachment" "eks_ssm_managed_instance" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  role       = aws_iam_role.eks_nodes.name
+}
 
 # ── Security Group for cluster ────────────────────────────────────────────────
 
@@ -125,7 +140,10 @@ resource "aws_eks_node_group" "main" {
   update_config { max_unavailable = 1 }
 
   # SOC 2: enable node-level SSM for patching without SSH
-  labels = { role = "worker"; environment = "eks" }
+  labels = {
+    role        = "worker"
+    environment = "eks"
+  }
 
   depends_on = [
     aws_iam_role_policy_attachment.eks_worker_node_policy,

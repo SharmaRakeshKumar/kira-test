@@ -3,10 +3,23 @@
 # SOC 2: secrets encrypted at rest with KMS, access controlled via IAM
 ###############################################################################
 
-variable "project_name" { type = string }
-variable "environment"  { type = string }
-variable "vendor_a_key" { type = string; sensitive = true }
-variable "vendor_b_key" { type = string; sensitive = true }
+variable "project_name" {
+  type = string
+}
+
+variable "environment" {
+  type = string
+}
+
+variable "vendor_a_key" {
+  type      = string
+  sensitive = true
+}
+
+variable "vendor_b_key" {
+  type      = string
+  sensitive = true
+}
 
 # ── KMS key for secret encryption ────────────────────────────────────────────
 
