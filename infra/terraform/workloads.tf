@@ -299,8 +299,9 @@ resource "kubernetes_service" "payments_api" {
     name      = "payments-api"
     namespace = kubernetes_namespace.payments.metadata[0].name
     annotations = {
-      "service.beta.kubernetes.io/aws-load-balancer-type"   = "external"
-      "service.beta.kubernetes.io/aws-load-balancer-scheme" = "internet-facing"
+      "service.beta.kubernetes.io/aws-load-balancer-type"            = "external"
+      "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type" = "instance"
+      "service.beta.kubernetes.io/aws-load-balancer-scheme"          = "internet-facing"
     }
   }
 
