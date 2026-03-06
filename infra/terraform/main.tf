@@ -1,5 +1,5 @@
 ###############################################################################
-# USDC → COP Payments API  —  AWS EKS  ap-south-1
+# USDC → COP Payments API  —  AWS EKS
 # Core AWS infrastructure only (VPC, EKS, ECR, IAM, Secrets)
 # Kubernetes workloads are in workloads.tf
 ###############################################################################
@@ -29,7 +29,8 @@ terraform {
   backend "s3" {
     bucket         = "usdc-cop-tfstate"
     key            = "payments-api/terraform.tfstate"
-    region         = "ap-south-1"
+    # region is set via backend.tfvars — Terraform backend blocks do not support variable interpolation.
+    # Always init with: terraform init -backend-config=backend.tfvars
     encrypt        = true
     dynamodb_table = "usdc-cop-tflock"
   }

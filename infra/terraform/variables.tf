@@ -27,7 +27,7 @@ variable "vpc_cidr" {
 }
 
 variable "availability_zones" {
-  description = "AZs to use in ap-south-1"
+  description = "AZs to use — must match aws_region (set in terraform.tfvars)"
   type        = list(string)
   default     = ["ap-south-1a", "ap-south-1b", "ap-south-1c"]
 }
